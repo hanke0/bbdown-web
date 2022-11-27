@@ -3,6 +3,8 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -29,11 +31,13 @@ func init() {
 }
 
 var Option struct {
-	Addr string
+	Addr   string
+	BBDown string
 }
 
 func init() {
 	flag.StringVar(&Option.Addr, "addr", ":9280", "http server listen address")
+	flag.StringVar(&Option.BBDown, "bbdown", "./BBDown", "BBDown path")
 }
 
 func main() {
@@ -45,9 +49,50 @@ func main() {
 }
 
 type Job struct {
-	URL   string
-	Start time.Time
-	Spend time.Duration
+	URL    string
+	Start  time.Time
+	Spend  time.Duration
+	Output *os.File
+	Cmd    *exec.Cmd
+	State  string
+}
+
+// Start a download job
+func Start(url string) (*Job, error) {
+	var j Job
+	j.URL = url
+	j.Start = time.Now()
+	file, err := os.CreateTemp("", "bbdown-*")
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command(Option.BBDown,
+		"--multi-thread",
+		"--work-dir",
+		"/downloads",
+		"--encoding-priority",
+		"hevc,av1,avc",
+		"--delay-per-page",
+		"5",
+		url,
+	)
+	cmd.Stderr = file
+	cmd.Stderr = file
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	j.Cmd = cmd
+	j.Output = file
+	go func() {
+		log.Println(j.URL, "started", j.Output.Name())
+		if err := j.Cmd.Wait(); err != nil {
+			log.Println(j.URL, "fails", err, j.Output.Name())
+		} else {
+			log.Println(j.URL, "finish", j.Output.Name())
+		}
+	}()
+	return &j, nil
 }
 
 type Data struct {
@@ -105,6 +150,40 @@ func (s *Service) Submit(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(303)
 }
 
+func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	url := strings.TrimSpace(r.Form.Get("job"))
+	s.mu.Lock()
+	j := s.Jobs[url]
+	s.mu.Unlock()
+	if j == nil {
+		w.WriteHeader(404)
+		return
+	}
+	offset, err := j.Output.Seek(0, os.SEEK_CUR)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	var resp = make([]byte, 4096)
+	start := offset - int64(len(resp))
+	if start <= 0 {
+		start = 0
+	}
+	if offset == 0 {
+		w.Write(nil)
+		return
+	}
+	if _, err := j.Output.ReadAt(resp, start); err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	w.Write(resp)
+	return
+}
+
 func (s *Service) addAlerts(t string) {
 	s.alertsmu.Lock()
 	s.Alerts = append(s.Alerts, t)
@@ -127,10 +206,12 @@ func (s *Service) submitJob(url string) *Job {
 		s.addAlerts(fmt.Sprintf("url exists %s", url))
 		return j
 	}
-	j := &Job{
-		URL:   url,
-		Start: time.Now(),
+	j, err := Start(url)
+	if err != nil {
+		s.addAlerts(fmt.Sprintf("url(%s) fails: %v", url, err))
+		return nil
 	}
+
 	if s.Jobs == nil {
 		s.Jobs = map[string]*Job{}
 	}
@@ -144,6 +225,11 @@ func (s *Service) jobs() []*Job {
 	var i int
 	result := make([]*Job, len(s.Jobs))
 	for _, v := range s.Jobs {
+		if v.Cmd.ProcessState != nil {
+			v.State = v.Cmd.ProcessState.String()
+		} else {
+			v.State = "running"
+		}
 		result[i] = v
 		i++
 	}
@@ -168,6 +254,7 @@ func (s *Service) Serve(addr string) error {
 	}
 	s.Handle("GET", "/", s.Index)
 	s.Handle("POST", "/jobs/submit", s.Submit)
+	s.Handle("GET", "/jobs/status", s.Status)
 
 	return http.ListenAndServe(addr, s.mux)
 }
