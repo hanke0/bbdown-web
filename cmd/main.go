@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -49,12 +50,50 @@ func main() {
 }
 
 type Job struct {
-	URL    string
-	Start  time.Time
-	Spend  time.Duration
-	Output *os.File
+	URL   string
+	Start time.Time
+	Spend time.Duration
+	Cmd   *Cmd
+	State string
+}
+
+type Cmd struct {
 	Cmd    *exec.Cmd
-	State  string
+	Output *os.File
+}
+
+func Exec(name string, args ...string) (*Cmd, error) {
+	file, err := os.CreateTemp("", "bbdown-*")
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = file
+	cmd.Stderr = file
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &Cmd{Cmd: cmd, Output: file}, nil
+}
+
+func (c *Cmd) Tail() ([]byte, error) {
+	offset, err := c.Output.Seek(0, os.SEEK_CUR)
+	if err != nil {
+		return nil, err
+	}
+	var resp = make([]byte, 4096)
+	start := offset - int64(len(resp))
+	if start <= 0 {
+		start = 0
+	}
+	if offset == 0 {
+		return nil, nil
+	}
+	if _, err := c.Output.ReadAt(resp, start); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // Start a download job
@@ -62,12 +101,7 @@ func Start(url string) (*Job, error) {
 	var j Job
 	j.URL = url
 	j.Start = time.Now()
-	file, err := os.CreateTemp("", "bbdown-*")
-	if err != nil {
-		return nil, err
-	}
-
-	cmd := exec.Command(Option.BBDown,
+	cmd, err := Exec(Option.BBDown,
 		"--multi-thread",
 		"--work-dir",
 		"/downloads",
@@ -77,19 +111,16 @@ func Start(url string) (*Job, error) {
 		"5",
 		url,
 	)
-	cmd.Stderr = file
-	cmd.Stderr = file
-	if err := cmd.Start(); err != nil {
+	if err != nil {
 		return nil, err
 	}
 	j.Cmd = cmd
-	j.Output = file
 	go func() {
-		log.Println(j.URL, "started", j.Output.Name())
-		if err := j.Cmd.Wait(); err != nil {
-			log.Println(j.URL, "fails", err, j.Output.Name())
+		log.Println(j.URL, "started", j.Cmd.Output.Name())
+		if err := j.Cmd.Cmd.Wait(); err != nil {
+			log.Println(j.URL, "fails", err, j.Cmd.Output.Name())
 		} else {
-			log.Println(j.URL, "finish", j.Output.Name())
+			log.Println(j.URL, "finish", j.Cmd.Output.Name())
 		}
 	}()
 	return &j, nil
@@ -150,6 +181,52 @@ func (s *Service) Submit(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(303)
 }
 
+var (
+	loginMu  sync.Mutex
+	loginCmd *exec.Cmd
+)
+
+func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+
+	if loginCmd != nil {
+		loginCmd.Process.Kill()
+	}
+
+	os.Remove("./qrcode.png")
+	cmd := exec.Command(Option.BBDown, "login")
+	if err := cmd.Start(); err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	loginCmd = cmd
+	defer func() {
+		go func() {
+			err := cmd.Wait()
+			loginMu.Lock()
+			if cmd == loginCmd {
+				loginCmd = nil
+			}
+			loginMu.Unlock()
+			log.Println("login return with", err)
+		}()
+	}()
+
+	time.Sleep(time.Second)
+
+	file, err := os.Open("./qrcode.png")
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.WriteHeader(200)
+	io.Copy(w, file)
+}
+
 func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	url := strings.TrimSpace(r.Form.Get("job"))
@@ -160,22 +237,8 @@ func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		return
 	}
-	offset, err := j.Output.Seek(0, os.SEEK_CUR)
+	resp, err := j.Cmd.Tail()
 	if err != nil {
-		w.WriteHeader(500)
-		fmt.Fprintln(w, err)
-		return
-	}
-	var resp = make([]byte, 4096)
-	start := offset - int64(len(resp))
-	if start <= 0 {
-		start = 0
-	}
-	if offset == 0 {
-		w.Write(nil)
-		return
-	}
-	if _, err := j.Output.ReadAt(resp, start); err != nil {
 		w.WriteHeader(500)
 		fmt.Fprintln(w, err)
 		return
@@ -225,8 +288,8 @@ func (s *Service) jobs() []*Job {
 	var i int
 	result := make([]*Job, len(s.Jobs))
 	for _, v := range s.Jobs {
-		if v.Cmd.ProcessState != nil {
-			v.State = v.Cmd.ProcessState.String()
+		if v.Cmd.Cmd.ProcessState != nil {
+			v.State = v.Cmd.Cmd.ProcessState.String()
 		} else {
 			v.State = "running"
 		}
@@ -244,6 +307,7 @@ func (s *Service) Handle(method, path string, h func(w http.ResponseWriter, r *h
 			w.WriteHeader(405)
 			return
 		}
+		log.Println(r.Method, r.URL)
 		h(w, r)
 	})
 }
@@ -255,6 +319,7 @@ func (s *Service) Serve(addr string) error {
 	s.Handle("GET", "/", s.Index)
 	s.Handle("POST", "/jobs/submit", s.Submit)
 	s.Handle("GET", "/jobs/status", s.Status)
+	s.Handle("GET", "/login", s.Login)
 
 	return http.ListenAndServe(addr, s.mux)
 }
