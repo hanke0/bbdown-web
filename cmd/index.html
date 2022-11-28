@@ -13,7 +13,7 @@
     <li class="list-group-item d-flex justify-content-between align-items-center">{{.URL}}
     <span class="badge bg-primary rounded-pill">state {{.State}}</span>
     <span class="badge bg-primary rounded-pill">spend {{.Spend}}</span>
-    <a class="badge bg-primary rounded-pill" href="/jobs/status?job={{.URL}}">log</a>
+    <a class="badge bg-primary rounded-pill" href="/jobs/status?job={{.EscapeURL}}">log</a>
    </li>
    {{ end }}
 </ul>

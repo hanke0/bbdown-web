@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -86,11 +87,12 @@ func main() {
 }
 
 type Job struct {
-	URL   string
-	Start time.Time
-	Spend time.Duration
-	Cmd   *Cmd
-	State string
+	URL       string
+	EscapeURL string
+	Start     time.Time
+	Spend     time.Duration
+	Cmd       *Cmd
+	State     string
 }
 
 type Cmd struct {
@@ -144,9 +146,10 @@ func (c *Cmd) Close() {
 }
 
 // Start a download job
-func Start(url string) (*Job, error) {
+func Start(name string) (*Job, error) {
 	var j Job
-	j.URL = url
+	j.URL = name
+	j.EscapeURL = url.QueryEscape(name)
 	j.Start = time.Now()
 	cmd, err := Exec(Option.BBDown,
 		"--multi-thread",
@@ -156,7 +159,7 @@ func Start(url string) (*Job, error) {
 		"hevc,av1,avc",
 		"--delay-per-page",
 		"5",
-		url,
+		name,
 	)
 	if err != nil {
 		return nil, err
