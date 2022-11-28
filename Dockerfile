@@ -5,8 +5,9 @@ RUN apt-get update && apt-get install -y curl unzip
 RUN curl -o /tmp/bbdown.zip -sSL https://github.com/nilaoda/BBDown/releases/download/1.5.4/BBDown_1.5.4_20221019_linux-x64.zip \
     && cd /tmp/ && unzip bbdown.zip
 
-COPY . /app
-
+COPY go.mod /app/go.mod
+COPY go.sum /app/go.sum
+COPY *.go /app/
 RUN cd /app && go build -o /tmp/bbdown-web ./cmd/main.go
 
 FROM linuxserver/ffmpeg:latest
