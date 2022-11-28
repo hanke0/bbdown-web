@@ -6,8 +6,7 @@ RUN curl -o /tmp/bbdown.zip -sSL https://github.com/nilaoda/BBDown/releases/down
     && cd /tmp/ && unzip bbdown.zip
 
 COPY go.mod /app/go.mod
-COPY go.sum /app/go.sum
-COPY *.go /app/
+COPY cmd/* /app/cmd/
 RUN cd /app && go build -o /tmp/bbdown-web ./cmd/main.go
 
 FROM linuxserver/ffmpeg:latest
