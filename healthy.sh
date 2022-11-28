@@ -1,3 +1,3 @@
 #!/bin/bash
 
-curl http://$LISTEN_ADDR/ping
+curl http://127.0.0.1:$LISTEN_PORT/ping
