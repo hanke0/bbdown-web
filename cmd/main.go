@@ -2,33 +2,38 @@ package main
 
 import (
 	_ "embed"
+	"encoding/base64"
+	"flag"
 	"fmt"
 	"io"
+	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
 	"sync"
-	"encoding/base64"
-
-	"flag"
 	"text/template"
-	"log"
-	"net/http"
 	"time"
 )
 
 //go:embed base.html
 var baseTplString string
+
 //go:embed index.html
 var indexTplStr string
+
 //go:embed login.html
 var loginTplString string
 
+//go:embed status.html
+var statusTplString string
+
 var (
-	indexTpl *template.Template
-	baseTpl *template.Template
-	loginTpl *template.Template
+	indexTpl  *template.Template
+	baseTpl   *template.Template
+	loginTpl  *template.Template
+	statusTpl *template.Template
 )
 
 func mustTpl(page, content string) *template.Template {
@@ -43,17 +48,24 @@ func init() {
 	baseTpl = template.Must(template.New("base.html").Parse(baseTplString))
 	indexTpl = mustTpl("index.html", indexTplStr)
 	loginTpl = mustTpl("login.html", loginTplString)
+	statusTpl = mustTpl("status.html", statusTplString)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 
 var Option struct {
-	Addr   string
-	BBDown string
+	Addr     string
+	BBDown   string
+	Download string
 }
 
 func init() {
 	flag.StringVar(&Option.Addr, "addr", ":9280", "http server listen address")
-	flag.StringVar(&Option.BBDown, "bbdown", "./BBDown", "BBDown path")
+	var defaultBBDown = "BBDown"
+	if _, err := os.Stat("./BBDown"); err == nil {
+		defaultBBDown = "./BBDown"
+	}
+	flag.StringVar(&Option.BBDown, "bbdown", defaultBBDown, "BBDown path")
+	flag.StringVar(&Option.Download, "download", "./", "download path")
 }
 
 func main() {
@@ -106,7 +118,7 @@ func (c *Cmd) Tail() ([]byte, error) {
 	if offset == 0 {
 		return nil, nil
 	}
-	if _, err := c.Output.ReadAt(resp, start); err != nil {
+	if _, err := c.Output.ReadAt(resp, start); err != nil && err != io.EOF {
 		return nil, err
 	}
 	return resp, nil
@@ -131,7 +143,7 @@ func Start(url string) (*Job, error) {
 	cmd, err := Exec(Option.BBDown,
 		"--multi-thread",
 		"--work-dir",
-		"/downloads",
+		Option.Download,
 		"--encoding-priority",
 		"hevc,av1,avc",
 		"--delay-per-page",
@@ -209,14 +221,37 @@ func (s *Service) Submit(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(303)
 }
 
+func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	url := strings.TrimSpace(r.Form.Get("job"))
+	s.mu.Lock()
+	j := s.Jobs[url]
+	s.mu.Unlock()
+	if j == nil {
+		w.WriteHeader(404)
+		return
+	}
+	resp, err := j.Cmd.Tail()
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	cmd := j.Cmd
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if cmd.Cmd.ProcessState != nil && cmd.Cmd.ProcessState.Exited() {
+		resp = append(resp, '\n')
+		resp = append(resp, cmd.Cmd.ProcessState.String()...)
+	}
+	if err := statusTpl.Execute(w, string(resp)); err != nil {
+		log.Println(err)
+	}
+}
+
 var (
 	loginMu  sync.Mutex
 	loginCmd *Cmd
 )
-
-type Login struct {
-	Image string
-}
 
 func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 	loginMu.Lock()
@@ -237,11 +272,6 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		go func() {
 			err := cmd.Cmd.Wait()
-			loginMu.Lock()
-			if cmd == loginCmd {
-				loginCmd = nil
-			}
-			loginMu.Unlock()
 			log.Println("login return with", err)
 		}()
 	}()
@@ -262,6 +292,7 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enc.Close()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := loginTpl.Execute(w, image.String()); err != nil {
 		log.Println(err)
 	}
@@ -273,6 +304,7 @@ func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
 	loginMu.Unlock()
 	if cmd == nil {
 		w.WriteHeader(200)
+		fmt.Fprintln(w, "process not exists")
 		return
 	}
 	data, err := cmd.Tail()
@@ -281,28 +313,11 @@ func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, err)
 		return
 	}
-	w.Write(data)
-	return
-}
-
-func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	url := strings.TrimSpace(r.Form.Get("job"))
-	s.mu.Lock()
-	j := s.Jobs[url]
-	s.mu.Unlock()
-	if j == nil {
-		w.WriteHeader(404)
-		return
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintln(w, string(data))
+	if cmd.Cmd.ProcessState != nil && cmd.Cmd.ProcessState.Exited() {
+		fmt.Fprintln(w, cmd.Cmd.ProcessState.String())
 	}
-	resp, err := j.Cmd.Tail()
-	if err != nil {
-		w.WriteHeader(500)
-		fmt.Fprintln(w, err)
-		return
-	}
-	w.Write(resp)
-	return
 }
 
 func (s *Service) addAlerts(t string) {

@@ -12,6 +12,8 @@
                 document.getElementById("loginlog").innerText = req.responseText;
             }
         });
+        req.open("GET","/login/log");
+        req.send();
         setTimeout(updateLoginLog, 3000);
     }
     updateLoginLog();
