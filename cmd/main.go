@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
 	"flag"
@@ -56,6 +57,8 @@ var Option struct {
 	Addr     string
 	BBDown   string
 	Download string
+	User     string
+	Password string
 }
 
 func init() {
@@ -66,10 +69,15 @@ func init() {
 	}
 	flag.StringVar(&Option.BBDown, "bbdown", defaultBBDown, "BBDown path")
 	flag.StringVar(&Option.Download, "download", "./", "download path")
+	Option.User = os.Getenv("AUTH_USER")
+	Option.Password = os.Getenv("AUTH_PWD")
 }
 
 func main() {
 	flag.Parse()
+	if Option.User == "" || Option.Password == "" {
+		log.Fatal("AUTH_USER or AUTH_PWD is empty")
+	}
 	var s Service
 	log.Println("serve at", Option.Addr)
 	if err := s.Serve(Option.Addr); err != nil {
@@ -385,6 +393,15 @@ func (s *Service) Handle(method, path string, h func(w http.ResponseWriter, r *h
 			return
 		}
 		log.Println(r.Method, r.URL)
+		user, pass, ok := r.BasicAuth()
+		if !ok ||
+			subtle.ConstantTimeCompare([]byte(user), []byte(Option.User)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(pass), []byte(Option.Password)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="bbdown"`)
+			w.WriteHeader(401)
+			w.Write([]byte("Unauthorised.\n"))
+			return
+		}
 		h(w, r)
 	})
 }

@@ -9,7 +9,7 @@ COPY . /app
 
 RUN cd /app && go build -o /tmp/bbdown-web ./cmd/main.go
 
-FROM linuxserver/ffmpeg
+FROM linuxserver/ffmpeg:latest
 
 RUN mkdir -p /downloads /config \
     && apt-get update \
@@ -27,7 +27,9 @@ RUN chmod +x /app/BBDown \
 
 ENV BBDOWN=./BBDown \
     LISTEN_ADDR=":9280" \
-    DOWNLOAD="/downloads"
+    DOWNLOAD="/downloads" \
+    AUTH_USER="admin" \
+    AUTH_PWD="admin"
 
 EXPOSE 9280
 WORKDIR /app
