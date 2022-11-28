@@ -9,25 +9,40 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"encoding/base64"
 
 	"flag"
-	"html/template"
+	"text/template"
 	"log"
 	"net/http"
 	"time"
 )
 
+//go:embed base.html
+var baseTplString string
 //go:embed index.html
 var indexTplStr string
+//go:embed login.html
+var loginTplString string
 
-var indexTpl *template.Template
+var (
+	indexTpl *template.Template
+	baseTpl *template.Template
+	loginTpl *template.Template
+)
 
-func init() {
-	var err error
-	indexTpl, err = template.New("index.html").Parse(indexTplStr)
-	if err != nil {
+func mustTpl(page, content string) *template.Template {
+	var sb strings.Builder
+	if err := baseTpl.Execute(&sb, content); err != nil {
 		panic(err)
 	}
+	return template.Must(template.New(page).Parse(sb.String()))
+}
+
+func init() {
+	baseTpl = template.Must(template.New("base.html").Parse(baseTplString))
+	indexTpl = mustTpl("index.html", indexTplStr)
+	loginTpl = mustTpl("login.html", loginTplString)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 
@@ -44,6 +59,7 @@ func init() {
 func main() {
 	flag.Parse()
 	var s Service
+	log.Println("serve at", Option.Addr)
 	if err := s.Serve(Option.Addr); err != nil {
 		log.Fatal(err)
 	}
@@ -94,6 +110,17 @@ func (c *Cmd) Tail() ([]byte, error) {
 		return nil, err
 	}
 	return resp, nil
+}
+
+func (c *Cmd) Close() {
+	if c.Cmd.Process != nil {
+		c.Cmd.Process.Kill()
+	}
+	c.Cmd.Wait()
+	c.Output.Close()
+	os.Remove(c.Output.Name())
+	c.Output = nil
+	c.Cmd = nil
 }
 
 // Start a download job
@@ -165,6 +192,7 @@ func (s *Service) Index(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Alerts = s.alerts()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
 	if err := indexTpl.Execute(w, d); err != nil {
 		log.Println(err)
 	}
@@ -183,20 +211,24 @@ func (s *Service) Submit(w http.ResponseWriter, r *http.Request) {
 
 var (
 	loginMu  sync.Mutex
-	loginCmd *exec.Cmd
+	loginCmd *Cmd
 )
+
+type Login struct {
+	Image string
+}
 
 func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 	loginMu.Lock()
 	defer loginMu.Unlock()
 
 	if loginCmd != nil {
-		loginCmd.Process.Kill()
+		loginCmd.Close()
 	}
 
 	os.Remove("./qrcode.png")
-	cmd := exec.Command(Option.BBDown, "login")
-	if err := cmd.Start(); err != nil {
+	cmd, err := Exec(Option.BBDown, "login")
+	if err != nil {
 		w.WriteHeader(500)
 		fmt.Fprintln(w, err)
 		return
@@ -204,7 +236,7 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 	loginCmd = cmd
 	defer func() {
 		go func() {
-			err := cmd.Wait()
+			err := cmd.Cmd.Wait()
 			loginMu.Lock()
 			if cmd == loginCmd {
 				loginCmd = nil
@@ -222,9 +254,35 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
-	w.WriteHeader(200)
-	io.Copy(w, file)
+	var image strings.Builder
+	enc := base64.NewEncoder(base64.StdEncoding, &image)
+	if _, err := io.Copy(enc, file); err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	enc.Close()
+	if err := loginTpl.Execute(w, image.String()); err != nil {
+		log.Println(err)
+	}
+}
+
+func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
+	loginMu.Lock()
+	cmd := loginCmd
+	loginMu.Unlock()
+	if cmd == nil {
+		w.WriteHeader(200)
+		return
+	}
+	data, err := cmd.Tail()
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	w.Write(data)
+	return
 }
 
 func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +378,7 @@ func (s *Service) Serve(addr string) error {
 	s.Handle("POST", "/jobs/submit", s.Submit)
 	s.Handle("GET", "/jobs/status", s.Status)
 	s.Handle("GET", "/login", s.Login)
+	s.Handle("GET", "/login/log", s.LoginLog)
 
 	return http.ListenAndServe(addr, s.mux)
 }

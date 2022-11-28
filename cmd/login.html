@@ -1,0 +1,18 @@
+<img alt="My Image" src="data:image/png;base64,{{.}}" />
+</br>
+<div id="loginlog"></div>
+<script>
+    function updateLoginLog() {
+        let req = new XMLHttpRequest();
+        req.addEventListener("error", function (e) {
+            console.log(e)
+        });
+        req.addEventListener("load", function () {
+            if (req.readyState == req.DONE) {
+                document.getElementById("loginlog").innerText = req.responseText;
+            }
+        });
+        setTimeout(updateLoginLog, 3000);
+    }
+    updateLoginLog();
+</script>
