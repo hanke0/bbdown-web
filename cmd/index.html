@@ -14,6 +14,7 @@
     <span class="badge bg-primary rounded-pill">state {{.State}}</span>
     <span class="badge bg-primary rounded-pill">spend {{.Spend}}</span>
     <a class="badge bg-primary rounded-pill" href="/jobs/status?job={{.EscapeURL}}">log</a>
+    <a class="badge bg-primary rounded-pill" href="/jobs/delete?job={{.EscapeURL}}">delete</a>
    </li>
    {{ end }}
 </ul>

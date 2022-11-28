@@ -259,6 +259,20 @@ func (s *Service) Status(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Service) Delete(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	url := strings.TrimSpace(r.Form.Get("job"))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.Jobs[url]
+	delete(s.Jobs, url)
+	if j != nil {
+		j.Cmd.Close()
+	}
+	w.Header().Add("Location", "/")
+	w.WriteHeader(303)
+}
+
 var (
 	loginMu  sync.Mutex
 	loginCmd *Cmd
@@ -418,6 +432,7 @@ func (s *Service) Serve(addr string) error {
 	s.Handle("GET", "/", s.Index)
 	s.Handle("POST", "/jobs/submit", s.Submit)
 	s.Handle("GET", "/jobs/status", s.Status)
+	s.Handle("GET", "/jobs/delete", s.Delete)
 	s.Handle("GET", "/login", s.Login)
 	s.Handle("GET", "/login/log", s.LoginLog)
 	s.Handle("GEt", "/ping", s.Ping)
