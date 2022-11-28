@@ -320,6 +320,10 @@ func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Service) Ping(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("OK"))
+}
+
 func (s *Service) addAlerts(t string) {
 	s.alertsmu.Lock()
 	s.Alerts = append(s.Alerts, t)
@@ -394,6 +398,7 @@ func (s *Service) Serve(addr string) error {
 	s.Handle("GET", "/jobs/status", s.Status)
 	s.Handle("GET", "/login", s.Login)
 	s.Handle("GET", "/login/log", s.LoginLog)
+	s.Handle("GEt", "/ping", s.Ping)
 
 	return http.ListenAndServe(addr, s.mux)
 }
