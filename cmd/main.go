@@ -115,18 +115,25 @@ func Exec(name string, args ...string) (*Cmd, error) {
 	return &Cmd{Cmd: cmd, Output: file}, nil
 }
 
+const maxLogSize = 1<<20
+
 func (c *Cmd) Tail() ([]byte, error) {
 	offset, err := c.Output.Seek(0, os.SEEK_CUR)
 	if err != nil {
 		return nil, err
 	}
-	var resp = make([]byte, 4096)
+	if offset == 0 {
+		return nil, nil
+	}
+
+	size := offset
+	if size > maxLogSize {
+		size = maxLogSize
+	}
+	var resp = make([]byte, size)
 	start := offset - int64(len(resp))
 	if start <= 0 {
 		start = 0
-	}
-	if offset == 0 {
-		return nil, nil
 	}
 	if _, err := c.Output.ReadAt(resp, start); err != nil && err != io.EOF {
 		return nil, err
