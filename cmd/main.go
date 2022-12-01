@@ -166,6 +166,7 @@ func Start(name string) (*Job, error) {
 		"hevc,av1,avc",
 		"--delay-per-page",
 		"5",
+		"--download-danmaku",
 		name,
 	)
 	if err != nil {
@@ -352,6 +353,13 @@ func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Service) ServeFile(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimLeft(r.URL.Path, "/files")
+	name := Option.Download + "/" + path
+	log.Println("GET file", name)
+	http.ServeFile(w, r, name)
+}
+
 func (s *Service) Ping(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(200)
@@ -443,6 +451,6 @@ func (s *Service) Serve(addr string) error {
 	s.Handle("GET", "/login", s.Login)
 	s.Handle("GET", "/login/log", s.LoginLog)
 	s.Handle("GEt", "/ping", s.Ping)
-
+	s.Handle("GET", "/files/", s.ServeFile)
 	return http.ListenAndServe(addr, s.mux)
 }
