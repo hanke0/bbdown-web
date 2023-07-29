@@ -74,9 +74,9 @@ func init() {
 	flag.StringVar(&Option.BBDown, "bbdown", defaultBBDown, "BBDown path")
 	flag.StringVar(&Option.Download, "download", "./", "download path")
 	flag.StringVar(&Option.BBDownOption,
-		"bbown-option",
-		`--encoding-priority hevc,av1,avc --delay-per-page 5 --download-danmaku`,
-		"bbown extra options, multi arguments are split by space. quote space by \\ or around by \"\"",
+		"bbdown-option",
+		`--multi-thread --encoding-priority hevc,av1,avc --delay-per-page 5 --download-danmaku`,
+		"bbown extra options, multi arguments are split by space. quote space by \\ or around by \"\".--work-dir should not set, using -download",
 	)
 	Option.User = os.Getenv("AUTH_USER")
 	Option.Password = os.Getenv("AUTH_PWD")
@@ -235,13 +235,12 @@ func Start(joburl string) (*Job, error) {
 	var j Job
 	j.URL = joburl
 	j.Start = time.Now()
-	cmd, err := Exec(Option.BBDown,
-		"--multi-thread",
+	var opts = append([]string{
 		"--work-dir",
 		Option.Download,
-
-		joburl,
-	)
+	}, Option.bbdownOptions...)
+	opts = append(opts, joburl)
+	cmd, err := Exec(Option.BBDown, opts...)
 	if err != nil {
 		return nil, err
 	}
