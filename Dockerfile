@@ -26,6 +26,7 @@ RUN chmod +x /app/BBDown \
     && chmod +x /app/healthy.sh
 
 ENV BBDOWN=./BBDown \
+    BBDOWNOPTION= \
     LISTEN_HOST="0.0.0.0" \
     LISTEN_PORT="9280" \
     DOWNLOAD="/downloads" \
