@@ -4,12 +4,13 @@ import (
 	"crypto/subtle"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -55,11 +56,13 @@ func init() {
 }
 
 var Option struct {
-	Addr     string
-	BBDown   string
-	Download string
-	User     string
-	Password string
+	Addr          string
+	BBDown        string
+	Download      string
+	User          string
+	Password      string
+	BBDownOption  string
+	bbdownOptions []string
 }
 
 func init() {
@@ -70,8 +73,70 @@ func init() {
 	}
 	flag.StringVar(&Option.BBDown, "bbdown", defaultBBDown, "BBDown path")
 	flag.StringVar(&Option.Download, "download", "./", "download path")
+	flag.StringVar(&Option.BBDownOption,
+		"bbown-option",
+		`--encoding-priority hevc,av1,avc --delay-per-page 5 --download-danmaku`,
+		"bbown extra options, multi arguments are split by space. quote space by \\ or around by \"\"",
+	)
 	Option.User = os.Getenv("AUTH_USER")
 	Option.Password = os.Getenv("AUTH_PWD")
+}
+
+func parseOption(opt string) ([]string, error) {
+	var opts []string
+	var quoted bool
+	var bs strings.Builder
+	var reader = strings.NewReader(opt)
+	for {
+		r, _, err := reader.ReadRune()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return opts, err
+		}
+		switch r {
+		case '"':
+			if !quoted {
+				quoted = true
+				continue
+			}
+			opts = append(opts, bs.String())
+			bs.Reset()
+			quoted = false
+		case '\\':
+			if quoted {
+				bs.WriteRune(r)
+				continue
+			}
+			r1, _, err1 := reader.ReadRune()
+			if err1 != nil {
+				if err1 == io.EOF {
+					return opts, errors.New("bad escape latter \\")
+				}
+				return opts, err
+			}
+			bs.WriteRune(r1)
+		case ' ':
+			if quoted {
+				bs.WriteRune(r)
+				continue
+			}
+			if bs.Len() != 0 {
+				opts = append(opts, bs.String())
+				bs.Reset()
+			}
+		default:
+			bs.WriteRune(r)
+		}
+	}
+	if quoted {
+		return opts, errors.New("can not find close \"")
+	}
+	if bs.Len() > 0 {
+		opts = append(opts, bs.String())
+	}
+	return opts, nil
 }
 
 func main() {
@@ -79,6 +144,12 @@ func main() {
 	if Option.User == "" || Option.Password == "" {
 		log.Fatal("AUTH_USER or AUTH_PWD is empty")
 	}
+	args, err := parseOption(Option.BBDownOption)
+	if err != nil {
+		log.Fatalf("parse bbdown option fails: %v", err)
+	}
+	Option.bbdownOptions = args
+	log.Printf("bbdown options is %s", format(args))
 	var s Service
 	log.Println("serve at", Option.Addr)
 	if err := s.Serve(Option.Addr); err != nil {
@@ -86,13 +157,20 @@ func main() {
 	}
 }
 
+func format(s interface{}) string {
+	var bs strings.Builder
+	enc := json.NewEncoder(&bs)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return bs.String()
+}
+
 type Job struct {
-	URL       string
-	EscapeURL string
-	Start     time.Time
-	Spend     time.Duration
-	Cmd       *Cmd
-	State     string
+	URL   string
+	Start time.Time
+	Spend time.Duration
+	Cmd   *Cmd
+	State string
 }
 
 type Cmd struct {
@@ -115,7 +193,7 @@ func Exec(name string, args ...string) (*Cmd, error) {
 	return &Cmd{Cmd: cmd, Output: file}, nil
 }
 
-const maxLogSize = 1<<20
+const maxLogSize = 1 << 20
 
 func (c *Cmd) Tail() ([]byte, error) {
 	offset, err := c.Output.Seek(0, os.SEEK_CUR)
@@ -153,21 +231,16 @@ func (c *Cmd) Close() {
 }
 
 // Start a download job
-func Start(name string) (*Job, error) {
+func Start(joburl string) (*Job, error) {
 	var j Job
-	j.URL = name
-	j.EscapeURL = url.QueryEscape(name)
+	j.URL = joburl
 	j.Start = time.Now()
 	cmd, err := Exec(Option.BBDown,
 		"--multi-thread",
 		"--work-dir",
 		Option.Download,
-		"--encoding-priority",
-		"hevc,av1,avc",
-		"--delay-per-page",
-		"5",
-		"--download-danmaku",
-		name,
+
+		joburl,
 	)
 	if err != nil {
 		return nil, err
