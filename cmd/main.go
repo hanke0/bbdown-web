@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -166,11 +167,12 @@ func format(s interface{}) string {
 }
 
 type Job struct {
-	URL   string
-	Start time.Time
-	Spend time.Duration
-	Cmd   *Cmd
-	State string
+	URL       string
+	EscapeURL string // for render index.html
+	Start     time.Time
+	Spend     time.Duration
+	Cmd       *Cmd
+	State     string
 }
 
 type Cmd struct {
@@ -234,6 +236,7 @@ func (c *Cmd) Close() {
 func Start(joburl string) (*Job, error) {
 	var j Job
 	j.URL = joburl
+	j.EscapeURL = url.QueryEscape(j.URL)
 	j.Start = time.Now()
 	var opts = append([]string{
 		"--work-dir",
