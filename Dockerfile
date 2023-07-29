@@ -2,7 +2,7 @@ FROM golang:1.19 as build
 
 RUN apt-get update && apt-get install -y curl unzip
 
-RUN curl -o /tmp/bbdown.zip -sSL https://github.com/nilaoda/BBDown/releases/download/1.5.4/BBDown_1.5.4_20221019_linux-x64.zip \
+RUN curl -o /tmp/bbdown.zip -sSL https://github.com/nilaoda/BBDown/releases/download/1.6.0/BBDown_1.6.0_20230715_linux-x64.zip \
     && cd /tmp/ && unzip bbdown.zip
 
 COPY go.mod /app/go.mod
