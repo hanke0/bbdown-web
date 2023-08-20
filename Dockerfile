@@ -2,7 +2,7 @@ FROM golang:1.19 as build
 
 RUN apt-get update && apt-get install -y curl unzip
 
-RUN curl -o /tmp/bbdown.zip -sSL https://github.com/nilaoda/BBDown/releases/download/1.6.0/BBDown_1.6.0_20230715_linux-x64.zip \
+RUN curl -o /tmp/bbdown.zip -sSL https://github.com/nilaoda/BBDown/releases/download/1.6.1/BBDown_1.6.1_20230818_linux-x64.zip \
     && cd /tmp/ && unzip bbdown.zip
 
 COPY go.mod /app/go.mod
@@ -36,4 +36,5 @@ ENV BBDOWN=./BBDown \
 EXPOSE 9280
 WORKDIR /app
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 CMD [ "/app/healthy.sh" ]
+LABEL version="1.6.1"
 ENTRYPOINT ["/app/start.sh"]
