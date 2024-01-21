@@ -9,12 +9,15 @@
     </form>
 <h1>Running jobs</h1>
 <ul class="list-group">
-    {{ range .Jobs }} 
-    <li class="list-group-item d-flex justify-content-between align-items-center">{{.URL}}
-    <span class="badge bg-primary rounded-pill">state {{.State}}</span>
-    <span class="badge bg-primary rounded-pill">spend {{.Spend}}</span>
-    <a class="badge bg-primary rounded-pill" href="/jobs/status?job={{.EscapeURL}}">log</a>
-    <a class="badge bg-primary rounded-pill" href="/jobs/delete?job={{.EscapeURL}}">delete</a>
+    {{ range .Jobs }}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+        <div>
+            <p>{{.URL}}</p>
+            <span class="badge bg-primary rounded-pill">state {{.State}}</span>
+            <span class="badge bg-primary rounded-pill">spend {{.Spend}}</span>
+            <a class="badge bg-primary rounded-pill" href="/jobs/status?job={{.EscapeURL}}">log</a>
+            <a class="badge bg-primary rounded-pill" href="/jobs/delete?job={{.EscapeURL}}">delete</a>
+        </div>
    </li>
    {{ end }}
 </ul>
