@@ -429,14 +429,14 @@ func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) Version(w http.ResponseWriter, r *http.Request) {
-	cmd, err := Exec(Option.BBDown, "login")
+	cmd, err := Exec(Option.BBDown, "--version")
 	if err != nil {
 		w.WriteHeader(500)
 		fmt.Fprintln(w, err)
 		return
 	}
 	cmd.Cmd.Wait()
-	resp, err := io.ReadAll(cmd.Output)
+	resp, err := cmd.Tail()
 	if err != nil {
 		w.WriteHeader(500)
 		fmt.Fprintln(w, err)
