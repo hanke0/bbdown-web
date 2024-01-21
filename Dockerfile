@@ -38,3 +38,6 @@ WORKDIR /app
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 CMD [ "/app/healthy.sh" ]
 LABEL version="1.6.1"
 ENTRYPOINT ["/app/start.sh"]
+
+LABEL bbdown-version="1.6.1"
+LABEL author="hanke"

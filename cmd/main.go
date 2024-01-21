@@ -198,7 +198,7 @@ func Exec(name string, args ...string) (*Cmd, error) {
 const maxLogSize = 1 << 20
 
 func (c *Cmd) Tail() ([]byte, error) {
-	offset, err := c.Output.Seek(0, os.SEEK_CUR)
+	offset, err := c.Output.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return nil, err
 	}
@@ -428,6 +428,26 @@ func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Service) Version(w http.ResponseWriter, r *http.Request) {
+	cmd, err := Exec(Option.BBDown, "login")
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	cmd.Cmd.Wait()
+	resp, err := io.ReadAll(cmd.Output)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Fprintln(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := statusTpl.Execute(w, string(resp)); err != nil {
+		log.Println(err)
+	}
+}
+
 func (s *Service) ServeFile(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimLeft(r.URL.Path, "/files")
 	name := Option.Download + "/" + path
@@ -525,7 +545,8 @@ func (s *Service) Serve(addr string) error {
 	s.Handle("GET", "/jobs/delete", s.Delete)
 	s.Handle("GET", "/login", s.Login)
 	s.Handle("GET", "/login/log", s.LoginLog)
-	s.Handle("GEt", "/ping", s.Ping)
+	s.Handle("GET", "/ping", s.Ping)
 	s.Handle("GET", "/files/", s.ServeFile)
+	s.Handle("GET", "/version", s.Version)
 	return http.ListenAndServe(addr, s.mux)
 }
