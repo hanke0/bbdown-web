@@ -2,6 +2,7 @@
 </br>
 <div id="loginlog"></div>
 <script>
+    var multilineRE = /\n\n\n+/;
     function updateLoginLog() {
         let req = new XMLHttpRequest();
         req.addEventListener("error", function (e) {
@@ -9,10 +10,12 @@
         });
         req.addEventListener("load", function () {
             if (req.readyState == req.DONE) {
-                document.getElementById("loginlog").innerText = req.responseText;
+                console.log(req);
+                let d = req.responseText.replace('█', '');
+                document.getElementById("loginlog").innerText = d.replace(multilineRE, '\n');;
             }
         });
-        req.open("GET","/login/log");
+        req.open("GET", "/login/log");
         req.send();
         setTimeout(updateLoginLog, 3000);
     }

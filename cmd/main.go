@@ -1,11 +1,12 @@
 package main
 
 import (
-	"crypto/subtle"
 	_ "embed"
+
+	"bytes"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -57,13 +58,12 @@ func init() {
 }
 
 var Option struct {
-	Addr          string
-	BBDown        string
-	Download      string
-	User          string
-	Password      string
-	BBDownOption  string
-	bbdownOptions []string
+	Addr         string
+	BBDown       string
+	Download     string
+	User         string
+	Password     string
+	BBDownConfig string
 }
 
 func init() {
@@ -74,83 +74,13 @@ func init() {
 	}
 	flag.StringVar(&Option.BBDown, "bbdown", defaultBBDown, "BBDown path")
 	flag.StringVar(&Option.Download, "download", "./", "download path")
-	flag.StringVar(&Option.BBDownOption,
-		"bbdown-option",
-		`--multi-thread --encoding-priority hevc,av1,avc --delay-per-page 5 --download-danmaku`,
-		"bbown extra options, multi arguments are split by space. quote space by \\ or around by \"\".--work-dir should not set, using -download",
-	)
+	flag.StringVar(&Option.BBDownConfig, "bbdown-config", ``, "bbdown config file")
 	Option.User = os.Getenv("AUTH_USER")
 	Option.Password = os.Getenv("AUTH_PWD")
 }
 
-func parseOption(opt string) ([]string, error) {
-	var opts []string
-	var quoted bool
-	var bs strings.Builder
-	var reader = strings.NewReader(opt)
-	for {
-		r, _, err := reader.ReadRune()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return opts, err
-		}
-		switch r {
-		case '"':
-			if !quoted {
-				quoted = true
-				continue
-			}
-			opts = append(opts, bs.String())
-			bs.Reset()
-			quoted = false
-		case '\\':
-			if quoted {
-				bs.WriteRune(r)
-				continue
-			}
-			r1, _, err1 := reader.ReadRune()
-			if err1 != nil {
-				if err1 == io.EOF {
-					return opts, errors.New("bad escape latter \\")
-				}
-				return opts, err
-			}
-			bs.WriteRune(r1)
-		case ' ':
-			if quoted {
-				bs.WriteRune(r)
-				continue
-			}
-			if bs.Len() != 0 {
-				opts = append(opts, bs.String())
-				bs.Reset()
-			}
-		default:
-			bs.WriteRune(r)
-		}
-	}
-	if quoted {
-		return opts, errors.New("can not find close \"")
-	}
-	if bs.Len() > 0 {
-		opts = append(opts, bs.String())
-	}
-	return opts, nil
-}
-
 func main() {
 	flag.Parse()
-	if Option.User == "" || Option.Password == "" {
-		log.Fatal("AUTH_USER or AUTH_PWD is empty")
-	}
-	args, err := parseOption(Option.BBDownOption)
-	if err != nil {
-		log.Fatalf("parse bbdown option fails: %v", err)
-	}
-	Option.bbdownOptions = args
-	log.Printf("bbdown options is %s", format(args))
 	var s Service
 	log.Println("serve at", Option.Addr)
 	if err := s.Serve(Option.Addr); err != nil {
@@ -198,6 +128,9 @@ func Exec(name string, args ...string) (*Cmd, error) {
 const maxLogSize = 1 << 20
 
 func (c *Cmd) Tail() ([]byte, error) {
+	if c.Output == nil {
+		return nil, fmt.Errorf("cmd is closed")
+	}
 	offset, err := c.Output.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return nil, err
@@ -218,10 +151,13 @@ func (c *Cmd) Tail() ([]byte, error) {
 	if _, err := c.Output.ReadAt(resp, start); err != nil && err != io.EOF {
 		return nil, err
 	}
-	return resp, nil
+	return bytes.ToValidUTF8(resp, nil), nil
 }
 
 func (c *Cmd) Close() {
+	if c.Cmd == nil {
+		return
+	}
 	if c.Cmd.Process != nil {
 		c.Cmd.Process.Kill()
 	}
@@ -238,10 +174,13 @@ func Start(joburl string) (*Job, error) {
 	j.URL = joburl
 	j.EscapeURL = url.QueryEscape(j.URL)
 	j.Start = time.Now()
-	var opts = append([]string{
+	var opts = []string{
 		"--work-dir",
 		Option.Download,
-	}, Option.bbdownOptions...)
+	}
+	if Option.BBDownConfig != "" {
+		opts = append(opts, "--config-file", Option.BBDownConfig)
+	}
 	opts = append(opts, joburl)
 	cmd, err := Exec(Option.BBDown, opts...)
 	if err != nil {
@@ -379,8 +318,12 @@ func (s *Service) Login(w http.ResponseWriter, r *http.Request) {
 	loginCmd = cmd
 	defer func() {
 		go func() {
-			err := cmd.Cmd.Wait()
-			log.Println("login return with", err)
+			go func() {
+				err := cmd.Cmd.Wait()
+				log.Println("login return with", err)
+			}()
+			time.Sleep(time.Second * 60)
+			cmd.Close()
 		}()
 	}()
 
@@ -421,8 +364,9 @@ func (s *Service) LoginLog(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, err)
 		return
 	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintln(w, string(data))
+	fmt.Fprintln(w, string(bytes.ReplaceAll(data, []byte("█"), nil)))
 	if cmd.Cmd.ProcessState != nil && cmd.Cmd.ProcessState.Exited() {
 		fmt.Fprintln(w, cmd.Cmd.ProcessState.String())
 	}
@@ -522,14 +466,16 @@ func (s *Service) Handle(method, path string, h func(w http.ResponseWriter, r *h
 			return
 		}
 		log.Println(r.Method, r.URL)
-		user, pass, ok := r.BasicAuth()
-		if !ok ||
-			subtle.ConstantTimeCompare([]byte(user), []byte(Option.User)) != 1 ||
-			subtle.ConstantTimeCompare([]byte(pass), []byte(Option.Password)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="bbdown"`)
-			w.WriteHeader(401)
-			w.Write([]byte("Unauthorised.\n"))
-			return
+		if Option.User != "" {
+			user, pass, ok := r.BasicAuth()
+			if !ok ||
+				subtle.ConstantTimeCompare([]byte(user), []byte(Option.User)) != 1 ||
+				subtle.ConstantTimeCompare([]byte(pass), []byte(Option.Password)) != 1 {
+				w.Header().Set("WWW-Authenticate", `Basic realm="bbdown"`)
+				w.WriteHeader(401)
+				w.Write([]byte("Unauthorised.\n"))
+				return
+			}
 		}
 		h(w, r)
 	})
