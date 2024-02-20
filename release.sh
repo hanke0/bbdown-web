@@ -13,7 +13,7 @@ release_platform() {
     done
 }
 
-rm -r ./dist
+rm -rf ./dist
 mkdir -p ./dist
 
 release_platform \
